@@ -1,0 +1,42 @@
+{
+  "name": "aimd-bucket",
+  "version": "0.1.0",
+  "description": "An adaptive rate limiting leaky bucket",
+  "main": "dist/src/index.js",
+  "repository": "gadget-inc/aimd-bucket",
+  "author": "Gadget Software Inc.",
+  "license": "MIT",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "prettier --check \"{spec,src}/**/*.{js,ts}\"",
+    "lint:fix": "prettier --write --check \"{spec,src}/**/*.{js,ts}\"",
+    "build": "rm -rf dist && tsc",
+    "watch": "rm -rf dist && tsc --watch --preserveWatchOutput",
+    "prepublishOnly": "pnpm run build",
+    "prerelease": "gitpkg publish",
+    "clean": "rm -rf *.0x *-v8.log",
+    "x": "tsx"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.2",
+    "@gadgetinc/prettier-config": "^0.4.0",
+    "@types/fs-extra": "^11.0.4",
+    "@types/lodash": "^4.17.18",
+    "@types/node": "^24.0.4",
+    "@types/yargs": "^17.0.33",
+    "execa": "^5.1.1",
+    "fs-extra": "^11.3.0",
+    "lodash": "^4.17.21",
+    "prettier": "^2.8.1",
+    "tinybench": "^2.6.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.5",
+    "yargs": "^17.7.2"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "1.9.0"
+  },
+  "packageManager": "pnpm@9.11.0+sha512.0a203ffaed5a3f63242cd064c8fb5892366c103e328079318f78062f24ea8c9d50bc6a47aa3567cabefd824d170e78fa2745ed1f16b132e16436146b7688f19b"
+}
