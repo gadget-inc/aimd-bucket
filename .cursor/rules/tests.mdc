@@ -1,0 +1,6 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+Tests are written using vitest and live in the `spec` dir. Run all the tests with `pnpm test`. Run one test with `pnpm test -- -t "should respect maxRate limit"`

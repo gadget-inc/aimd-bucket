@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "lib": ["es2020", "DOM"],
+    "baseUrl": "./",
+    "moduleResolution": "node",
+    "module": "commonjs",
+    "target": "es2020",
+    "types": ["vitest", "node"],
+    "outDir": "./dist",
+    "strict": true,
+    "declaration": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  }
+}
