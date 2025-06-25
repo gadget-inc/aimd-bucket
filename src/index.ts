@@ -39,7 +39,7 @@ export interface AIMDBucketStatistics {
  * One token that has been successfully acquired from the bucket
  * Expected to be completed once as either a success, failure, rate limited, or timeout
  */
-export class Token {
+export class AIMDBucketToken {
   private completed = false;
   private expired = false;
   private timeoutHandle?: NodeJS.Timeout;
@@ -126,7 +126,7 @@ export class AIMDBucket {
   private lastRefill = Date.now();
   private recentOutcomes: Array<{ timestamp: number; outcome: "success" | "failure" | "rateLimited" | "timeout" }> = [];
   private tokensIssued = 0; // Only track total issued for reporting
-  private pending: { resolve: (token: Token) => void; reject: (error: Error) => void; timestamp: number }[] = [];
+  private pending: { resolve: (token: AIMDBucketToken) => void; reject: (error: Error) => void; timestamp: number }[] = [];
   private isShutdown = false;
 
   private config: Required<AIMDBucketConfig>;
@@ -152,7 +152,7 @@ export class AIMDBucket {
    * Acquire a token to make a request
    * @returns Promise that resolves to a Token when one becomes available
    */
-  async acquire(): Promise<Token> {
+  async acquire(): Promise<AIMDBucketToken> {
     if (this.isShutdown) {
       throw new Error("Bucket has been shut down");
     }
@@ -163,7 +163,7 @@ export class AIMDBucket {
       // capacity is available now, immediately issue a token
       this.tokens--;
       this.tokensIssued++;
-      return new Token(this, this.config.tokenTimeoutMs);
+      return new AIMDBucketToken(this, this.config.tokenTimeoutMs);
     } else {
       // capacity is not available now, return a promise for a future token
       const span = tracer.startSpan("token-bucket.wait", {
@@ -176,7 +176,7 @@ export class AIMDBucket {
 
       return new Promise((resolve, reject) => {
         this.pending.push({
-          resolve: (token: Token) => {
+          resolve: (token: AIMDBucketToken) => {
             span.end();
             resolve(token);
           },
@@ -286,7 +286,7 @@ export class AIMDBucket {
       const request = this.pending.shift()!;
       this.tokens--;
       this.tokensIssued++;
-      request.resolve(new Token(this, this.config.tokenTimeoutMs));
+      request.resolve(new AIMDBucketToken(this, this.config.tokenTimeoutMs));
     }
   }
 

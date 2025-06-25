@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { AIMDBucket, AIMDBucketConfig, Token } from "../src/index";
+import { AIMDBucket, AIMDBucketConfig, AIMDBucketToken } from "../src/index";
 
 describe("AIMDBucket", () => {
   let bucket: AIMDBucket;
@@ -46,7 +46,7 @@ describe("AIMDBucket", () => {
 
     it("should acquire tokens immediately when bucket has capacity", async () => {
       const token = await bucket.acquire();
-      expect(token).toBeInstanceOf(Token);
+      expect(token).toBeInstanceOf(AIMDBucketToken);
       expect(token.isExpired()).toBe(false);
     });
 
@@ -63,7 +63,7 @@ describe("AIMDBucket", () => {
 
       // Now we should be able to acquire more
       const additionalToken = await bucket.acquire();
-      expect(additionalToken).toBeInstanceOf(Token);
+      expect(additionalToken).toBeInstanceOf(AIMDBucketToken);
     });
 
     it("should process multiple pending requests in order", async () => {
@@ -77,14 +77,14 @@ describe("AIMDBucket", () => {
       const newTokens = await Promise.all([bucket.acquire(), bucket.acquire(), bucket.acquire()]);
 
       expect(newTokens).toHaveLength(3);
-      newTokens.forEach((token) => expect(token).toBeInstanceOf(Token));
+      newTokens.forEach((token) => expect(token).toBeInstanceOf(AIMDBucketToken));
     });
 
     it("should support concurrent token acquisition", async () => {
       const promises = Array.from({ length: 5 }, () => bucket.acquire());
       const tokens = await Promise.all(promises);
       expect(tokens).toHaveLength(5);
-      tokens.forEach((token) => expect(token).toBeInstanceOf(Token));
+      tokens.forEach((token) => expect(token).toBeInstanceOf(AIMDBucketToken));
     });
 
     it("should respect maxRate limit", async () => {
@@ -537,7 +537,7 @@ describe("AIMDBucket", () => {
       // Should still be able to acquire more after timeout
       await vi.advanceTimersByTimeAsync(10000);
       const newToken = await bucket.acquire();
-      expect(newToken).toBeInstanceOf(Token);
+      expect(newToken).toBeInstanceOf(AIMDBucketToken);
     });
 
     it("should handle configuration edge cases", () => {
@@ -593,7 +593,7 @@ describe("AIMDBucket", () => {
       const additionalTokens = await Promise.all([bucket.acquire(), bucket.acquire(), bucket.acquire()]);
 
       expect(additionalTokens).toHaveLength(3);
-      additionalTokens.forEach((token) => expect(token).toBeInstanceOf(Token));
+      additionalTokens.forEach((token) => expect(token).toBeInstanceOf(AIMDBucketToken));
 
       const finalStats = bucket.getStatistics();
       expect(finalStats.tokensIssued).toBe(initialStats.tokensIssued + 13);
@@ -603,7 +603,7 @@ describe("AIMDBucket", () => {
 
 describe("Token", () => {
   let bucket: AIMDBucket;
-  let token: Token;
+  let token: AIMDBucketToken;
 
   beforeEach(async () => {
     vi.useFakeTimers();

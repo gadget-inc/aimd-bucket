@@ -333,7 +333,7 @@ const conservativeBucket = new AIMDBucket({
 
 ## API Reference
 
-### AIMDBucket
+### `AIMDBucket`
 
 #### Constructor
 
@@ -343,12 +343,12 @@ new AIMDBucket(config?: AIMDBucketConfig)
 
 #### Methods
 
-- `acquire(): Promise<Token>` - Acquire a token for making a request
+- `acquire(): Promise<AIMDBucketToken>` - Acquire a token for making a request
 - `getCurrentRate(): number` - Get current rate limit (tokens per second)
 - `getStatistics(): AIMDBucketStatistics` - Get current statistics
 - `shutdown(): Promise<void>` - Gracefully shut down the bucket
 
-### Token
+### `AIMDBucketToken`
 
 #### Methods
 
