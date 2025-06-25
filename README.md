@@ -143,6 +143,39 @@ setInterval(() => {
 }, 5000);
 ```
 
+### OpenTelemetry Observability
+
+The AIMD Bucket automatically emits OpenTelemetry spans when tokens are not immediately available and require waiting. This provides valuable observability into rate limiting behavior without any additional configuration.
+
+#### Emitted Spans
+
+**Span Name**: `token-bucket.wait`
+
+**When Emitted**: Only when `acquire()` cannot immediately provide a token and the request must wait for capacity to become available.
+
+**Attributes**:
+
+- `token_bucket.current_rate` (number): Current rate limit in tokens per second
+- `token_bucket.available_tokens` (number): Number of tokens currently available
+- `token_bucket.pending_requests` (number): Number of requests currently waiting for tokens
+
+**Example Usage**:
+
+```typescript
+import { trace } from "@opentelemetry/api";
+
+// The span is automatically created when waiting is required
+const token = await bucket.acquire(); // May create a span if tokens aren't immediately available
+
+// You can access the current span context if needed
+const currentSpan = trace.getActiveSpan();
+if (currentSpan) {
+  console.log("Current span:", currentSpan.name);
+}
+```
+
+**Note**: No spans are emitted for immediate token acquisition when capacity is available. Spans are only created when there's an actual wait period, providing focused observability on rate limiting bottlenecks.
+
 ### Graceful Shutdown
 
 ```typescript

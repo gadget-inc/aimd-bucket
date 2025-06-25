@@ -1,3 +1,5 @@
+import { trace } from "@opentelemetry/api";
+
 /**
  * Configuration options for the AIMD Bucket rate limiter
  */
@@ -109,6 +111,8 @@ export class Token {
   }
 }
 
+const tracer = trace.getTracer("aimd-bucket");
+
 /**
  * AIMD (Additive Increase Multiplicative Decrease) Rate Limiting Bucket
  *
@@ -162,8 +166,27 @@ export class AIMDBucket {
       return new Token(this, this.config.tokenTimeoutMs);
     } else {
       // capacity is not available now, return a promise for a future token
+      const span = tracer.startSpan("token-bucket.wait", {
+        attributes: {
+          "token_bucket.current_rate": this.rate,
+          "token_bucket.available_tokens": this.tokens,
+          "token_bucket.pending_requests": this.pending.length,
+        },
+      });
+
       return new Promise((resolve, reject) => {
-        this.pending.push({ resolve, reject, timestamp: Date.now() });
+        this.pending.push({
+          resolve: (token: Token) => {
+            span.end();
+            resolve(token);
+          },
+          reject: (error: Error) => {
+            span.recordException(error);
+            span.end();
+            reject(error);
+          },
+          timestamp: Date.now(),
+        });
       });
     }
   }
@@ -274,12 +297,8 @@ export class AIMDBucket {
     // Remove old outcomes outside the window
     this.recentOutcomes = this.recentOutcomes.filter((o) => now - o.timestamp <= windowMs);
 
-    // Adaptive minimum samples based on current rate and time window
-    // At very low rates, we need fewer samples to avoid getting stuck
-    const expectedOutcomesInWindow = Math.max(1, Math.floor((this.rate * windowMs) / 1000));
-    const minSamples = Math.min(5, Math.max(2, Math.floor(expectedOutcomesInWindow * 0.5)));
-
-    if (this.recentOutcomes.length < minSamples) return;
+    // Need minimum samples to make rate decisions
+    if (this.recentOutcomes.length < 5) return;
 
     const failures = this.recentOutcomes.filter((o) => o.outcome !== "success").length;
     const failureRate = failures / this.recentOutcomes.length;
