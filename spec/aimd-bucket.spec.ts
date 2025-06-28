@@ -513,6 +513,47 @@ describe("AIMDBucket", () => {
       bucket = new AIMDBucket({ initialRate: 10 });
     });
 
+    it("should process pending requests when tokens are completed with sufficient time gaps", async () => {
+      // This test verifies the fix for the lockup bug where pending requests get stuck
+      bucket = new AIMDBucket({
+        initialRate: 4, // Start with low rate like user's case
+        tokenReturnTimeoutMs: 10000, // Long timeout so tokens don't auto-expire
+      });
+
+      // Acquire tokens that will be resolved immediately (up to initial capacity)
+      const immediateTokens = await Promise.all([bucket.acquire(), bucket.acquire(), bucket.acquire(), bucket.acquire()]);
+      expect(immediateTokens).toHaveLength(4);
+
+      // These should become pending since we've exhausted the bucket
+      const pendingTokenPromises = [bucket.acquire(), bucket.acquire(), bucket.acquire(), bucket.acquire(), bucket.acquire()];
+
+      // Advance time slightly to see initial state
+      await vi.advanceTimersByTimeAsync(100);
+      let stats = bucket.getStatistics();
+      expect(stats.tokensIssued).toBe(4);
+      expect(stats.pendingCount).toBe(5);
+
+      // Complete the immediate tokens successfully to trigger rate increase
+      // Add some time between completions to allow bucket to refill
+      for (let i = 0; i < immediateTokens.length; i++) {
+        immediateTokens[i].success();
+        await vi.advanceTimersByTimeAsync(500); // Allow some refill time
+      }
+
+      // At this point, some pending requests should have been processed during token completions
+      stats = bucket.getStatistics();
+      expect(stats.successCount).toBe(4);
+
+      // All pending requests should have been processed due to the fix
+      expect(stats.pendingCount).toBe(0);
+      expect(stats.tokensIssued).toBe(9); // 4 immediate + 5 pending
+
+      // Verify that all pending promises were resolved
+      const resolvedTokens = await Promise.all(pendingTokenPromises);
+      expect(resolvedTokens).toHaveLength(5);
+      resolvedTokens.forEach((token) => expect(token).toBeInstanceOf(AIMDBucketToken));
+    });
+
     it("should process pending requests when tokens timeout automatically", async () => {
       // This test reproduces the lockup bug
       bucket = new AIMDBucket({
@@ -627,6 +668,177 @@ describe("AIMDBucket", () => {
 
       const finalStats = bucket.getStatistics();
       expect(finalStats.tokensIssued).toBe(initialStats.tokensIssued + 13);
+    });
+
+    it("should process pending requests when new acquire call triggers processing", async () => {
+      bucket = new AIMDBucket({
+        initialRate: 2,
+        tokenReturnTimeoutMs: 5000,
+      });
+
+      // Exhaust the bucket completely
+      const immediateTokens = await Promise.all([bucket.acquire(), bucket.acquire()]);
+
+      // Create pending requests
+      const pendingPromises = [bucket.acquire(), bucket.acquire(), bucket.acquire()];
+
+      // Advance time slightly to ensure requests are pending
+      await vi.advanceTimersByTimeAsync(100);
+      let stats = bucket.getStatistics();
+      expect(stats.pendingCount).toBe(3);
+
+      // Complete immediate tokens with time gaps to trigger processing
+      for (let i = 0; i < immediateTokens.length; i++) {
+        immediateTokens[i].success();
+        await vi.advanceTimersByTimeAsync(1000); // Allow refill time
+      }
+
+      // Now make a new acquire call which should trigger processing of old pending requests
+      const newToken = await bucket.acquire();
+      expect(newToken).toBeInstanceOf(AIMDBucketToken);
+
+      // Verify pending requests were processed
+      const resolvedTokens = await Promise.all(pendingPromises);
+      expect(resolvedTokens).toHaveLength(3);
+
+      stats = bucket.getStatistics();
+      expect(stats.pendingCount).toBe(0);
+    });
+
+    it("should handle mixed fast and slow token completion patterns", async () => {
+      bucket = new AIMDBucket({
+        initialRate: 3,
+        tokenReturnTimeoutMs: 10000,
+      });
+
+      // Get initial tokens
+      const tokens = await Promise.all([bucket.acquire(), bucket.acquire(), bucket.acquire()]);
+
+      // Create pending requests
+      const pendingPromises = [bucket.acquire(), bucket.acquire(), bucket.acquire(), bucket.acquire()];
+
+      // Complete tokens with mixed timing
+      tokens[0].success(); // Fast completion
+      await vi.advanceTimersByTimeAsync(500);
+      tokens[1].success(); // Medium completion
+      await vi.advanceTimersByTimeAsync(1500);
+      tokens[2].success(); // Slow completion
+
+      // All pending should be processed due to refill over time
+      const resolvedTokens = await Promise.all(pendingPromises);
+      expect(resolvedTokens).toHaveLength(4);
+
+      const stats = bucket.getStatistics();
+      expect(stats.pendingCount).toBe(0);
+      expect(stats.tokensIssued).toBe(7);
+    });
+
+    it("should handle low rates with proper token completion timing", async () => {
+      bucket = new AIMDBucket({
+        initialRate: 2,
+        tokenReturnTimeoutMs: 5000,
+      });
+
+      // Should get first tokens immediately
+      const firstTokens = await Promise.all([bucket.acquire(), bucket.acquire()]);
+      expect(firstTokens).toHaveLength(2);
+
+      // These should be pending
+      const pendingPromises = [bucket.acquire(), bucket.acquire()];
+
+      await vi.advanceTimersByTimeAsync(100);
+      let stats = bucket.getStatistics();
+      expect(stats.pendingCount).toBe(2);
+
+      // Complete first tokens with time gaps to allow refill and processing
+      for (let i = 0; i < firstTokens.length; i++) {
+        firstTokens[i].success();
+        await vi.advanceTimersByTimeAsync(1000); // Allow time for refill
+      }
+
+      // Should have processed the pending requests
+      const resolvedTokens = await Promise.all(pendingPromises);
+      expect(resolvedTokens).toHaveLength(2);
+
+      stats = bucket.getStatistics();
+      expect(stats.pendingCount).toBe(0);
+    });
+
+    it("should handle burst of requests with new acquire triggering processing", async () => {
+      bucket = new AIMDBucket({
+        initialRate: 3,
+        tokenReturnTimeoutMs: 8000,
+      });
+
+      // Create a burst of requests
+      const burstPromises = Array.from({ length: 6 }, () => bucket.acquire());
+
+      await vi.advanceTimersByTimeAsync(100);
+      let stats = bucket.getStatistics();
+      expect(stats.tokensIssued).toBe(3); // Only initial capacity issued
+      expect(stats.pendingCount).toBe(3); // Rest are pending
+
+      // Complete some initial tokens with time gaps for refill
+      const immediateTokens = await Promise.all(burstPromises.slice(0, 3));
+      for (let i = 0; i < immediateTokens.length; i++) {
+        immediateTokens[i].success();
+        await vi.advanceTimersByTimeAsync(500);
+      }
+
+      // Now make a single new request which should trigger processing of remaining pending
+      const newToken = await bucket.acquire();
+      expect(newToken).toBeInstanceOf(AIMDBucketToken);
+
+      // All burst requests should be processed
+      const resolvedTokens = await Promise.all(burstPromises);
+      expect(resolvedTokens).toHaveLength(6);
+
+      stats = bucket.getStatistics();
+      expect(stats.pendingCount).toBe(0);
+    });
+
+    it("should handle token timeouts gracefully", async () => {
+      bucket = new AIMDBucket({
+        initialRate: 2,
+        tokenReturnTimeoutMs: 1000, // Short timeout
+      });
+
+      // Get initial tokens but don't complete them (let them timeout)
+      const initialTokens = await Promise.all([bucket.acquire(), bucket.acquire()]);
+
+      // Advance past token timeout
+      await vi.advanceTimersByTimeAsync(1200);
+
+      const stats = bucket.getStatistics();
+      expect(stats.timeoutCount).toBe(2); // Initial tokens timed out
+      expect(stats.tokensIssued).toBe(2); // Only initial tokens were issued
+    });
+
+    it("should process all pending requests when bucket refills", async () => {
+      bucket = new AIMDBucket({
+        initialRate: 2,
+        tokenReturnTimeoutMs: 5000,
+      });
+
+      // Get first tokens
+      const firstTokens = await Promise.all([bucket.acquire(), bucket.acquire()]);
+
+      // Create pending requests
+      const pendingPromises = [bucket.acquire(), bucket.acquire()];
+
+      // Complete first tokens with time to trigger processing
+      for (let i = 0; i < firstTokens.length; i++) {
+        firstTokens[i].success();
+        await vi.advanceTimersByTimeAsync(1000);
+      }
+
+      // All pending requests should be processed and resolved
+      const resolvedTokens = await Promise.all(pendingPromises);
+      expect(resolvedTokens).toHaveLength(2);
+      resolvedTokens.forEach((token) => expect(token).toBeInstanceOf(AIMDBucketToken));
+
+      const stats = bucket.getStatistics();
+      expect(stats.pendingCount).toBe(0);
     });
   });
 });

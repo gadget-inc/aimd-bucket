@@ -184,6 +184,7 @@ export class AIMDBucket {
       throw new Error("Bucket has been shut down");
     }
 
+    // Update token count and process any pending requests that can now be fulfilled
     this._refill();
 
     if (this.tokens >= 1) {
@@ -275,7 +276,7 @@ export class AIMDBucket {
     this.recentOutcomes.push({ timestamp: Date.now(), outcome });
     this._adjustRate();
     // Process pending requests in case rate adjustment or time passage made tokens available
-    this._processPending();
+    this._refill();
   }
 
   /**
@@ -285,7 +286,7 @@ export class AIMDBucket {
     this.recentOutcomes.push({ timestamp: Date.now(), outcome: "timeout" });
     this._adjustRate();
     // Process pending requests in case rate adjustment or time passage made tokens available
-    this._processPending();
+    this._refill();
   }
 
   private _validate(): void {
@@ -302,15 +303,14 @@ export class AIMDBucket {
     }
   }
 
+  /**
+   * Update token count based on elapsed time and process any pending requests
+   */
   private _refill(): void {
     const now = Date.now();
     const elapsed = (now - this.lastRefill) / 1000;
     this.tokens = Math.min(this.rate, this.tokens + elapsed * this.rate);
     this.lastRefill = now;
-  }
-
-  private _processPending(): void {
-    this._refill();
 
     while (this.pending.length > 0 && this.tokens >= 1) {
       const request = this.pending.shift()!;
