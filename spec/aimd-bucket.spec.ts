@@ -513,45 +513,48 @@ describe("AIMDBucket", () => {
       bucket = new AIMDBucket({ initialRate: 10 });
     });
 
-    it("should process pending requests when tokens are completed with sufficient time gaps", async () => {
-      // This test verifies the fix for the lockup bug where pending requests get stuck
+    it("should process pending requests when no events trigger refill (lockup bug fix)", async () => {
       bucket = new AIMDBucket({
-        initialRate: 4, // Start with low rate like user's case
-        tokenReturnTimeoutMs: 10000, // Long timeout so tokens don't auto-expire
+        initialRate: 3, // Low rate
+        tokenReturnTimeoutMs: 30000, // Long timeout so no auto-timeouts interfere
       });
 
-      // Acquire tokens that will be resolved immediately (up to initial capacity)
-      const immediateTokens = await Promise.all([bucket.acquire(), bucket.acquire(), bucket.acquire(), bucket.acquire()]);
-      expect(immediateTokens).toHaveLength(4);
+      // Get initial 3 tokens immediately (up to initial capacity)
+      const token1 = await bucket.acquire();
+      const token2 = await bucket.acquire();
+      const token3 = await bucket.acquire();
 
-      // These should become pending since we've exhausted the bucket
-      const pendingTokenPromises = [bucket.acquire(), bucket.acquire(), bucket.acquire(), bucket.acquire(), bucket.acquire()];
+      // Advance time to get 1 more token through refill
+      await vi.advanceTimersByTimeAsync(334); // ~1/3 second = 1 token at rate 3
+      const token4 = await bucket.acquire();
 
-      // Advance time slightly to see initial state
-      await vi.advanceTimersByTimeAsync(100);
       let stats = bucket.getStatistics();
       expect(stats.tokensIssued).toBe(4);
+      expect(stats.currentRate).toBe(3);
+
+      token1.success();
+      token2.success();
+      token3.success();
+      token4.success();
+
+      const pendingPromises = [bucket.acquire(), bucket.acquire(), bucket.acquire(), bucket.acquire(), bucket.acquire()];
+
+      await vi.advanceTimersByTimeAsync(50);
+      stats = bucket.getStatistics();
+      expect(stats.currentRate).toBe(3);
+      expect(stats.tokensIssued).toBe(4);
+      expect(stats.successCount).toBe(4);
       expect(stats.pendingCount).toBe(5);
 
-      // Complete the immediate tokens successfully to trigger rate increase
-      // Add some time between completions to allow bucket to refill
-      for (let i = 0; i < immediateTokens.length; i++) {
-        immediateTokens[i].success();
-        await vi.advanceTimersByTimeAsync(500); // Allow some refill time
-      }
+      // Now advance time significantly, but make NO new acquire() calls and don't complete any more tokens. This a lockup scenario. Time passes, bucket should refill, but pending requests never get processed because no events trigger _refill()
+      await vi.advanceTimersByTimeAsync(5000); // 5 seconds = 15 tokens should be available
 
-      // At this point, some pending requests should have been processed during token completions
       stats = bucket.getStatistics();
-      expect(stats.successCount).toBe(4);
-
-      // All pending requests should have been processed due to the fix
       expect(stats.pendingCount).toBe(0);
-      expect(stats.tokensIssued).toBe(9); // 4 immediate + 5 pending
+      expect(stats.tokensIssued).toBe(9);
 
-      // Verify that all pending promises were resolved
-      const resolvedTokens = await Promise.all(pendingTokenPromises);
+      const resolvedTokens = await Promise.all(pendingPromises);
       expect(resolvedTokens).toHaveLength(5);
-      resolvedTokens.forEach((token) => expect(token).toBeInstanceOf(AIMDBucketToken));
     });
 
     it("should process pending requests when tokens timeout automatically", async () => {

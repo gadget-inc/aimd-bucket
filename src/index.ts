@@ -153,6 +153,7 @@ export class AIMDBucket {
   private tokensIssued = 0; // Only track total issued for reporting
   private pending: { resolve: (token: AIMDBucketToken) => void; reject: (error: Error) => void; timestamp: number }[] = [];
   private isShutdown = false;
+  private pendingTimer?: NodeJS.Timeout;
 
   private config: Required<AIMDBucketConfig>;
 
@@ -215,6 +216,9 @@ export class AIMDBucket {
           },
           timestamp: Date.now(),
         });
+
+        // Set a one-shot timer to process pending requests if no events occur
+        this._schedulePendingCheck();
       });
     }
   }
@@ -259,6 +263,12 @@ export class AIMDBucket {
    */
   async shutdown(): Promise<void> {
     this.isShutdown = true;
+
+    // Clear pending timer
+    if (this.pendingTimer) {
+      clearTimeout(this.pendingTimer);
+      this.pendingTimer = undefined;
+    }
 
     // Reject all pending acquisitions
     const pendingRequests = [...this.pending];
@@ -318,6 +328,36 @@ export class AIMDBucket {
       this.tokensIssued++;
       request.resolve(new AIMDBucketToken(this, this.config.tokenReturnTimeoutMs));
     }
+
+    // Clear pending timer if no more pending requests
+    if (this.pending.length === 0 && this.pendingTimer) {
+      clearTimeout(this.pendingTimer);
+      this.pendingTimer = undefined;
+    }
+  }
+
+  /**
+   * Schedule a one-shot timer to process pending requests if no events occur
+   */
+  private _schedulePendingCheck(): void {
+    // Don't schedule if already scheduled or shutting down
+    if (this.pendingTimer || this.isShutdown) {
+      return;
+    }
+
+    // Calculate next expected refill time based on current rate
+    // At minimum, check every 100ms, but ideally check when next token should be available
+    const nextTokenTime = Math.max(100, 1000 / this.rate);
+
+    this.pendingTimer = setTimeout(() => {
+      this.pendingTimer = undefined;
+      this._refill();
+
+      // If there are still pending requests after refill, schedule another check
+      if (this.pending.length > 0 && !this.isShutdown) {
+        this._schedulePendingCheck();
+      }
+    }, nextTokenTime).unref(); // Use unref() so this doesn't keep the process alive
   }
 
   private _adjustRate(): void {
