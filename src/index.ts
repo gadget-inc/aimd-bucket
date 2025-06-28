@@ -51,6 +51,7 @@ export interface AIMDBucketConfig {
  */
 export interface AIMDBucketStatistics {
   currentRate: number;
+  tokensAvailable: number;
   tokensIssued: number;
   successCount: number;
   failureCount: number;
@@ -148,6 +149,7 @@ const tracer = trace.getTracer("aimd-bucket");
 export class AIMDBucket {
   private rate: number;
   private tokens: number;
+  private capacity: number;
   private lastRefill = Date.now();
   private recentOutcomes: Array<{ timestamp: number; outcome: "success" | "failure" | "rateLimited" | "timeout" }> = [];
   private tokensIssued = 0; // Only track total issued for reporting
@@ -173,7 +175,9 @@ export class AIMDBucket {
 
     this._validate();
     this.rate = Math.min(this.config.initialRate, this.config.maxRate);
-    this.tokens = this.rate;
+    // Capacity should be at least 1 to allow issuing tokens, even with fractional rates
+    this.capacity = Math.max(1, this.rate);
+    this.tokens = this.capacity;
   }
 
   /**
@@ -248,12 +252,13 @@ export class AIMDBucket {
 
     return {
       currentRate: this.rate,
+      tokensAvailable: this.tokens,
+      pendingCount: this.pending.length,
       tokensIssued: this.tokensIssued,
       successCount,
       failureCount,
       rateLimitedCount,
       timeoutCount,
-      pendingCount: this.pending.length,
       successRate: total > 0 ? successCount / total : 0,
     };
   }
@@ -319,7 +324,8 @@ export class AIMDBucket {
   private _refill(): void {
     const now = Date.now();
     const elapsed = (now - this.lastRefill) / 1000;
-    this.tokens = Math.min(this.rate, this.tokens + elapsed * this.rate);
+    // Use capacity instead of rate for the token limit to support fractional rates
+    this.tokens = Math.min(this.capacity, this.tokens + elapsed * this.rate);
     this.lastRefill = now;
 
     while (this.pending.length > 0 && this.tokens >= 1) {
@@ -380,5 +386,8 @@ export class AIMDBucket {
       // Additive increase
       this.rate = Math.min(this.config.maxRate, this.rate + this.config.increaseDelta);
     }
+
+    // Update capacity when rate changes, ensuring it's at least 1
+    this.capacity = Math.max(1, this.rate);
   }
 }

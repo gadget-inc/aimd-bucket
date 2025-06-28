@@ -557,6 +557,76 @@ describe("AIMDBucket", () => {
       expect(resolvedTokens).toHaveLength(5);
     });
 
+    it("should process pending requests with fractional rates", async () => {
+      // Test that the timer approach works correctly with rates < 1
+      bucket = new AIMDBucket({
+        initialRate: 0.5, // 0.5 tokens per second = 1 token every 2 seconds
+        tokenReturnTimeoutMs: 30000,
+      });
+
+      // Should get no tokens immediately since rate is 0.5 and bucket starts empty
+      // (Well, actually bucket starts with 0.5 tokens, so let's consume that first)
+      const firstToken = await bucket.acquire();
+      expect(firstToken).toBeInstanceOf(AIMDBucketToken);
+
+      // Now create pending requests that will need fractional accumulation
+      const pendingPromises = [bucket.acquire(), bucket.acquire(), bucket.acquire()];
+
+      await vi.advanceTimersByTimeAsync(50);
+      let stats = bucket.getStatistics();
+      expect(stats.currentRate).toBe(0.5);
+      expect(stats.pendingCount).toBe(3);
+
+      // Complete the first token to avoid any interference
+      firstToken.success();
+
+      // Advance time to allow fractional accumulation: 6 seconds = 3 tokens at 0.5/sec
+      await vi.advanceTimersByTimeAsync(6000);
+
+      // All pending requests should have been processed by the timer
+      stats = bucket.getStatistics();
+      expect(stats.pendingCount).toBe(0);
+
+      // Verify the promises actually resolved
+      const resolvedTokens = await Promise.all(pendingPromises);
+      expect(resolvedTokens).toHaveLength(3);
+      resolvedTokens.forEach((token) => expect(token).toBeInstanceOf(AIMDBucketToken));
+    });
+
+    it("should process pending requests with very low fractional rates", async () => {
+      // Test extreme case with very low rate
+      bucket = new AIMDBucket({
+        initialRate: 0.1, // 0.1 tokens per second = 1 token every 10 seconds
+        tokenReturnTimeoutMs: 60000,
+      });
+
+      // With capacity fix, bucket starts with 1 token (not 0.1), so first acquire succeeds
+      const firstToken = await bucket.acquire();
+      expect(firstToken).toBeInstanceOf(AIMDBucketToken);
+
+      // Now subsequent acquires should be pending
+      const pendingPromises = [bucket.acquire(), bucket.acquire()];
+
+      await vi.advanceTimersByTimeAsync(50);
+      let stats = bucket.getStatistics();
+      expect(stats.currentRate).toBe(0.1);
+      expect(stats.pendingCount).toBe(2);
+
+      // Complete first token to avoid interference
+      firstToken.success();
+
+      // Advance time: 20 seconds = 2 tokens at 0.1/sec
+      await vi.advanceTimersByTimeAsync(20000);
+
+      // Both pending requests should have been processed
+      stats = bucket.getStatistics();
+      expect(stats.pendingCount).toBe(0);
+
+      // Verify the promises actually resolved
+      const resolvedTokens = await Promise.all(pendingPromises);
+      expect(resolvedTokens).toHaveLength(2);
+    });
+
     it("should process pending requests when tokens timeout automatically", async () => {
       // This test reproduces the lockup bug
       bucket = new AIMDBucket({
