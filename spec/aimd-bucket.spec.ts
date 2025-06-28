@@ -407,6 +407,288 @@ describe("AIMDBucket", () => {
       // Rate should decrease immediately since old successes are outside the short window
       expect(quickBucket.getCurrentRate()).toBe(increasedRate * 0.5);
     });
+
+    it("should sustain token throughput at fractional rates", async () => {
+      // Test sustained throughput at 0.6 tokens per second
+      bucket = new AIMDBucket({
+        initialRate: 0.6,
+        tokenReturnTimeoutMs: 30000,
+      });
+
+      expect(bucket.getCurrentRate()).toBe(0.6);
+      const initialRate = bucket.getCurrentRate();
+
+      // Acquire tokens with proper timing for 0.6/sec rate
+      const tokens: AIMDBucketToken[] = [];
+
+      // At 0.6 tokens/sec, we should get 1 token roughly every 1.67 seconds
+      // Let's acquire 4 tokens (to avoid triggering rate adjustment with 5+ completions)
+      for (let i = 0; i < 4; i++) {
+        await vi.advanceTimersByTimeAsync(1667); // 1.67 seconds between tokens
+        const token = await bucket.acquire();
+        tokens.push(token);
+        token.success(); // Complete successfully
+      }
+
+      // Should have successfully acquired all 4 tokens
+      expect(tokens.length).toBe(4);
+      // Rate might have changed due to successes, but should still be reasonable for fractional
+      expect(bucket.getCurrentRate()).toBeGreaterThanOrEqual(initialRate);
+      expect(bucket.getCurrentRate()).toBeLessThan(2.0); // Shouldn't have grown too much
+    }, 15000);
+
+    it("should sustain precise fractional rate throughput over extended period", async () => {
+      // Test precise fractional rate of 0.33 tokens per second (1 token every 3 seconds)
+      bucket = new AIMDBucket({
+        initialRate: 0.33,
+        tokenReturnTimeoutMs: 60000,
+      });
+
+      const acquiredTokens: AIMDBucketToken[] = [];
+      const initialRate = bucket.getCurrentRate();
+
+      // At 0.33 tokens/sec, we get 1 token every ~3.03 seconds
+      // Let's acquire 4 tokens (to avoid rate adjustment) over ~12 seconds
+      for (let i = 0; i < 4; i++) {
+        await vi.advanceTimersByTimeAsync(3100); // A bit more than 3 seconds to be safe
+        const token = await bucket.acquire();
+        acquiredTokens.push(token);
+        token.success();
+      }
+
+      // Should have successfully acquired all 4 tokens
+      expect(acquiredTokens.length).toBe(4);
+      // Rate might increase due to successes, but should start fractional
+      expect(initialRate).toBeLessThan(1.0);
+    }, 20000);
+
+    it("should scale up from fractional rate to above 1.0 with sustained successes", async () => {
+      // Start with very low fractional rate
+      bucket = new AIMDBucket({
+        initialRate: 0.4,
+        maxRate: 10,
+        increaseDelta: 0.3,
+        decreaseMultiplier: 0.8,
+        failureThreshold: 0.2,
+        tokenReturnTimeoutMs: 30000,
+      });
+
+      expect(bucket.getCurrentRate()).toBe(0.4);
+      const initialRate = bucket.getCurrentRate();
+
+      // Complete 5 successful requests to trigger first rate increase
+      const firstBatch: AIMDBucketToken[] = [];
+      for (let i = 0; i < 5; i++) {
+        await vi.advanceTimersByTimeAsync(2500); // ~2.5 seconds per token at 0.4/sec
+        const token = await bucket.acquire();
+        firstBatch.push(token);
+        token.success();
+      }
+
+      // Rate should have increased after 5 successes
+      expect(bucket.getCurrentRate()).toBeGreaterThan(initialRate);
+      expect(bucket.getCurrentRate()).toBeLessThanOrEqual(initialRate + 0.3);
+
+      // Continue adding successful tokens to scale up further
+      const secondBatch: AIMDBucketToken[] = [];
+      let currentRate = bucket.getCurrentRate();
+      for (let i = 0; i < 5; i++) {
+        await vi.advanceTimersByTimeAsync(Math.ceil(1000 / currentRate));
+        const token = await bucket.acquire();
+        secondBatch.push(token);
+        token.success();
+        // Rate might increase after each completion once we have enough history
+        currentRate = bucket.getCurrentRate();
+      }
+
+      // Should now be above 1.0
+      expect(bucket.getCurrentRate()).toBeGreaterThan(1.0);
+
+      // Continue scaling to verify we can go well above 1.0
+      const thirdBatch: AIMDBucketToken[] = [];
+      for (let i = 0; i < 5; i++) {
+        await vi.advanceTimersByTimeAsync(Math.ceil(1000 / bucket.getCurrentRate()));
+        const token = await bucket.acquire();
+        thirdBatch.push(token);
+        token.success();
+      }
+
+      // Final verification: we've successfully scaled from 0.4 to well above 1.0
+      expect(bucket.getCurrentRate()).toBeGreaterThan(1.5);
+    }, 25000);
+
+    it("should handle fractional rate increases correctly", async () => {
+      // Test that fractional increaseDelta works properly with fractional rates
+      bucket = new AIMDBucket({
+        initialRate: 0.2,
+        maxRate: 5,
+        increaseDelta: 0.15, // Fractional increase
+        decreaseMultiplier: 0.7,
+        failureThreshold: 0.25,
+        tokenReturnTimeoutMs: 30000,
+      });
+
+      expect(bucket.getCurrentRate()).toBe(0.2);
+      const initialRate = bucket.getCurrentRate();
+
+      // Complete successful tokens to trigger rate increases
+      let currentRate = initialRate;
+      for (let batch = 0; batch < 10; batch++) {
+        // Complete a batch of 5 tokens
+        for (let i = 0; i < 5; i++) {
+          await vi.advanceTimersByTimeAsync(Math.ceil(1000 / bucket.getCurrentRate()));
+          const token = await bucket.acquire();
+          token.success();
+        }
+
+        // Rate should have increased after each batch
+        expect(bucket.getCurrentRate()).toBeGreaterThanOrEqual(currentRate);
+        currentRate = bucket.getCurrentRate();
+
+        // If we've crossed 1.0, we're good to break
+        if (currentRate > 1.0) {
+          break;
+        }
+      }
+
+      // Verify we successfully scaled from fractional to above 1.0
+      expect(bucket.getCurrentRate()).toBeGreaterThan(1.0);
+      expect(bucket.getCurrentRate()).toBeGreaterThan(initialRate);
+    }, 30000);
+
+    it("should maintain fractional rates under mixed success/failure conditions", async () => {
+      // Test that fractional rates can be maintained with appropriate success rates
+      bucket = new AIMDBucket({
+        initialRate: 0.8,
+        maxRate: 10,
+        minRate: 0.1,
+        increaseDelta: 0.2,
+        decreaseMultiplier: 0.6,
+        failureThreshold: 0.3, // 30% failure threshold
+        tokenReturnTimeoutMs: 30000,
+      });
+
+      expect(bucket.getCurrentRate()).toBe(0.8);
+      const initialRate = bucket.getCurrentRate();
+
+      // Complete tokens with high failure rate to trigger rate decrease
+      const tokens: AIMDBucketToken[] = [];
+      for (let i = 0; i < 10; i++) {
+        await vi.advanceTimersByTimeAsync(Math.ceil(1250 / bucket.getCurrentRate()));
+        const token = await bucket.acquire();
+        tokens.push(token);
+      }
+
+      // 40% failure rate (4/10 = 40% > 30% threshold)
+      tokens[0].rateLimited();
+      tokens[1].rateLimited();
+      tokens[2].rateLimited();
+      tokens[3].rateLimited();
+      tokens[4].success();
+      tokens[5].success();
+      tokens[6].success();
+      tokens[7].success();
+      tokens[8].success();
+      tokens[9].success();
+
+      // Rate should have decreased due to high failure rate
+      expect(bucket.getCurrentRate()).toBeLessThan(initialRate);
+      expect(bucket.getCurrentRate()).toBeGreaterThanOrEqual(0.1); // Should be at or above minimum
+    }, 20000);
+
+    it("should demonstrate end-to-end fractional rate scaling scenario", async () => {
+      // Comprehensive test showing fractional rate bucket handling real-world scenario
+      bucket = new AIMDBucket({
+        initialRate: 0.25, // Start very low - 1 token every 4 seconds
+        maxRate: 8,
+        minRate: 0.1,
+        increaseDelta: 0.25,
+        decreaseMultiplier: 0.5,
+        failureThreshold: 0.15,
+        tokenReturnTimeoutMs: 45000,
+      });
+
+      const rateHistory: { rate: number; phase: string }[] = [];
+
+      const recordRate = (phase: string) => {
+        rateHistory.push({ rate: bucket.getCurrentRate(), phase });
+      };
+
+      recordRate("Initial");
+      expect(bucket.getCurrentRate()).toBe(0.25);
+
+      // Phase 1: Scale up from fractional rates through successes
+      let currentRate = bucket.getCurrentRate();
+      for (let cycle = 0; cycle < 8; cycle++) {
+        // Complete 5 successful requests
+        for (let i = 0; i < 5; i++) {
+          const waitTime = Math.ceil(1000 / bucket.getCurrentRate());
+          await vi.advanceTimersByTimeAsync(waitTime);
+          const token = await bucket.acquire();
+          token.success();
+        }
+
+        recordRate(`Success Cycle ${cycle + 1}`);
+
+        // Rate should be increasing
+        expect(bucket.getCurrentRate()).toBeGreaterThanOrEqual(currentRate);
+        currentRate = bucket.getCurrentRate();
+
+        // If we've crossed 1.0, we can move to next phase
+        if (currentRate > 1.5) {
+          break;
+        }
+      }
+
+      // Should now be well above 1.0
+      expect(bucket.getCurrentRate()).toBeGreaterThan(1.0);
+      const peakRate = bucket.getCurrentRate();
+
+      // Phase 2: High failure rate causes decrease
+      const failureTokens: AIMDBucketToken[] = [];
+      for (let i = 0; i < 10; i++) {
+        const waitTime = Math.ceil(1000 / bucket.getCurrentRate());
+        await vi.advanceTimersByTimeAsync(waitTime);
+        const token = await bucket.acquire();
+        failureTokens.push(token);
+      }
+
+      // 80% failure rate (8/10 = 80% >> 15% threshold)
+      for (let i = 0; i < 8; i++) {
+        failureTokens[i].rateLimited();
+      }
+      failureTokens[8].success();
+      failureTokens[9].success();
+
+      recordRate("After High Failures");
+
+      // Rate should have decreased significantly
+      expect(bucket.getCurrentRate()).toBeLessThan(peakRate);
+      const decreasedRate = bucket.getCurrentRate();
+
+      // Phase 3: Recovery through successes
+      for (let cycle = 0; cycle < 5; cycle++) {
+        for (let i = 0; i < 5; i++) {
+          const waitTime = Math.ceil(1000 / bucket.getCurrentRate());
+          await vi.advanceTimersByTimeAsync(waitTime);
+          const token = await bucket.acquire();
+          token.success();
+        }
+        recordRate(`Recovery Cycle ${cycle + 1}`);
+      }
+
+      // Should have recovered somewhat (or at least not decreased further)
+      expect(bucket.getCurrentRate()).toBeGreaterThanOrEqual(decreasedRate);
+
+      // Verify the complete journey
+      expect(rateHistory[0].rate).toBe(0.25); // Started fractional
+
+      // Verify we had both fractional and above-1.0 rates during the test
+      const hadFractional = rateHistory.some((record) => record.rate < 1.0);
+      const hadAboveOne = rateHistory.some((record) => record.rate > 1.0);
+      expect(hadFractional).toBe(true);
+      expect(hadAboveOne).toBe(true);
+    }, 60000);
   });
 
   describe("statistics and monitoring", () => {
