@@ -513,6 +513,36 @@ describe("AIMDBucket", () => {
       bucket = new AIMDBucket({ initialRate: 10 });
     });
 
+    it("should process pending requests when tokens timeout automatically", async () => {
+      // This test reproduces the lockup bug
+      bucket = new AIMDBucket({
+        initialRate: 1, // Very low rate
+        tokenReturnTimeoutMs: 1000, // Short timeout for testing
+      });
+
+      // Acquire many tokens at once - first one should be immediate, rest should be pending
+      const tokenPromises = Array.from({ length: 5 }, () => bucket.acquire());
+
+      // Wait for first token to be resolved
+      await vi.advanceTimersByTimeAsync(50);
+
+      const stats1 = bucket.getStatistics();
+      expect(stats1.tokensIssued).toBe(1); // Only 1 token issued immediately
+      expect(stats1.pendingCount).toBe(4); // 4 requests should be pending
+
+      // Don't complete the first token - let it timeout automatically. Advance time past the token timeout
+      await vi.advanceTimersByTimeAsync(1100);
+
+      // After timeout, pending requests should start being processed due to refill
+      await vi.advanceTimersByTimeAsync(3000); // Allow time for refill (3 more tokens at 1/sec)
+
+      const stats2 = bucket.getStatistics();
+      expect(stats2.tokensIssued).toBeGreaterThan(1);
+      expect(stats2.pendingCount).toBeLessThan(4);
+
+      await bucket.shutdown();
+    });
+
     it("should handle rapid acquisition bursts", async () => {
       // Test that we can acquire tokens up to the bucket capacity
       const initialTokens = await Promise.all(Array.from({ length: 10 }, () => bucket.acquire()));

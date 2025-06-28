@@ -54,6 +54,7 @@ export interface AIMDBucketStatistics {
   tokensIssued: number;
   successCount: number;
   failureCount: number;
+  pendingCount: number;
   rateLimitedCount: number;
   timeoutCount: number;
   successRate: number;
@@ -247,6 +248,7 @@ export class AIMDBucket {
       failureCount,
       rateLimitedCount,
       timeoutCount,
+      pendingCount: this.pending.length,
       successRate: total > 0 ? successCount / total : 0,
     };
   }
@@ -282,6 +284,8 @@ export class AIMDBucket {
   _onTokenTimeout(): void {
     this.recentOutcomes.push({ timestamp: Date.now(), outcome: "timeout" });
     this._adjustRate();
+    // Process pending requests in case rate adjustment or time passage made tokens available
+    this._processPending();
   }
 
   private _validate(): void {
