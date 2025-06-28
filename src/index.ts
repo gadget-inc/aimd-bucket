@@ -110,14 +110,14 @@ export class AIMDBucketToken {
   /**
    * Check if the token has been completed (success/failure reported)
    */
-  isCompleted(): boolean {
+  get isCompleted(): boolean {
     return this.completed;
   }
 
   /**
    * Check if the token has expired
    */
-  isExpired(): boolean {
+  get isExpired(): boolean {
     return this.expired;
   }
 

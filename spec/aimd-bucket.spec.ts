@@ -47,7 +47,7 @@ describe("AIMDBucket", () => {
     it("should acquire tokens immediately when bucket has capacity", async () => {
       const token = await bucket.acquire();
       expect(token).toBeInstanceOf(AIMDBucketToken);
-      expect(token.isExpired()).toBe(false);
+      expect(token.isExpired).toBe(false);
     });
 
     it("should delay token acquisition when rate limit is reached", async () => {
@@ -137,25 +137,25 @@ describe("AIMDBucket", () => {
     it("should track token success", async () => {
       const token = await bucket.acquire();
       expect(() => token.success()).not.toThrow();
-      expect(token.isCompleted()).toBe(true);
+      expect(token.isCompleted).toBe(true);
     });
 
     it("should track token failure", async () => {
       const token = await bucket.acquire();
       expect(() => token.failure()).not.toThrow();
-      expect(token.isCompleted()).toBe(true);
+      expect(token.isCompleted).toBe(true);
     });
 
     it("should track rate limited failures", async () => {
       const token = await bucket.acquire();
       expect(() => token.rateLimited()).not.toThrow();
-      expect(token.isCompleted()).toBe(true);
+      expect(token.isCompleted).toBe(true);
     });
 
     it("should track token timeout", async () => {
       const token = await bucket.acquire();
       expect(() => token.timeout()).not.toThrow();
-      expect(token.isCompleted()).toBe(true);
+      expect(token.isCompleted).toBe(true);
     });
 
     it("should prevent double completion", async () => {
@@ -170,7 +170,7 @@ describe("AIMDBucket", () => {
       const token = await bucket.acquire();
 
       await vi.advanceTimersByTimeAsync(1100);
-      expect(token.isExpired()).toBe(true);
+      expect(token.isExpired).toBe(true);
       expect(() => token.success()).toThrow();
     });
   });
@@ -699,7 +699,7 @@ describe("AIMDBucket", () => {
       const token = await bucket.acquire();
 
       // Should not expire immediately
-      expect(token.isExpired()).toBe(false);
+      expect(token.isExpired).toBe(false);
 
       // Should be able to complete
       expect(() => token.success()).not.toThrow();
@@ -931,8 +931,8 @@ describe("Token", () => {
   });
 
   it("should have proper initial state", () => {
-    expect(token.isCompleted()).toBe(false);
-    expect(token.isExpired()).toBe(false);
+    expect(token.isCompleted).toBe(false);
+    expect(token.isExpired).toBe(false);
   });
 
   it("should provide completion methods", () => {
