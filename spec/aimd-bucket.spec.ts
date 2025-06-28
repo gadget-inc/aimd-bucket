@@ -166,7 +166,7 @@ describe("AIMDBucket", () => {
     });
 
     it("should auto-expire tokens after timeout", async () => {
-      bucket = new AIMDBucket({ tokenTimeoutMs: 1000 });
+      bucket = new AIMDBucket({ tokenReturnTimeoutMs: 1000 });
       const token = await bucket.acquire();
 
       await vi.advanceTimersByTimeAsync(1100);
@@ -551,7 +551,7 @@ describe("AIMDBucket", () => {
     });
 
     it("should handle zero timeout tokens", async () => {
-      bucket = new AIMDBucket({ tokenTimeoutMs: 0 });
+      bucket = new AIMDBucket({ tokenReturnTimeoutMs: 0 });
       const token = await bucket.acquire();
 
       // Should not expire immediately

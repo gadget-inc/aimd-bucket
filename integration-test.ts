@@ -188,7 +188,7 @@ class IntegrationTestRunner {
     increaseDelta: 1,
     decreaseMultiplier: 0.7,
     failureThreshold: 0.3,
-    tokenTimeoutMs: 5000,
+    tokenReturnTimeoutMs: 5000,
     windowMs: 10000,
   });
   private graph = new TerminalGraph(80, 15);

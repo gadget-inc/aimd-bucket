@@ -4,21 +4,45 @@ import { trace } from "@opentelemetry/api";
  * Configuration options for the AIMD Bucket rate limiter
  */
 export interface AIMDBucketConfig {
-  /** Initial rate limit (tokens per second) */
-  initialRate?: number;
-  /** Maximum rate limit (tokens per second) */
+  /**
+   * Maximum rate limit (tokens per second)
+   * @default Infinity
+   */
   maxRate?: number;
-  /** Minimum rate limit (tokens per second) */
+  /**
+   * Minimum rate limit (tokens per second)
+   * @default 1
+   */
   minRate?: number;
-  /** Amount to increase rate by on success (additive increase) */
+  /**
+   * Initial rate limit (tokens per second)
+   * @default maxRate
+   */
+  initialRate?: number;
+  /**
+   * Amount to increase rate by on success (additive increase)
+   * @default 1
+   */
   increaseDelta?: number;
-  /** Multiplier to decrease rate by on failure (multiplicative decrease) */
+  /**
+   * Multiplier to decrease rate by on failure (multiplicative decrease)
+   * @default 0.5
+   */
   decreaseMultiplier?: number;
-  /** Failure threshold (0-1) that triggers rate decrease */
+  /**
+   * Failure threshold (0-1) that triggers rate decrease
+   * @default 0.2
+   */
   failureThreshold?: number;
-  /** Token timeout in milliseconds */
-  tokenTimeoutMs?: number;
-  /** Sliding window duration in milliseconds for rate adjustment decisions */
+  /**
+   * If tokens aren't marked with an outcome within this timeout, they'll be automatically marked as timed out. Measured in milliseconds.
+   * @default 30000
+   */
+  tokenReturnTimeoutMs?: number;
+  /**
+   * Sliding window stats collection duration for rate adjustment decisions in milliseconds
+   * @default 30000
+   */
   windowMs?: number;
 }
 
@@ -132,14 +156,16 @@ export class AIMDBucket {
   private config: Required<AIMDBucketConfig>;
 
   constructor(config: AIMDBucketConfig = {}) {
+    const maxRate = config.maxRate ?? Number.MAX_SAFE_INTEGER / 2; // effectively infinity, but we can still do math on it
+
     this.config = {
-      initialRate: config.initialRate ?? 10,
-      maxRate: config.maxRate ?? 100,
+      initialRate: config.initialRate ?? maxRate,
+      maxRate,
       minRate: config.minRate ?? 1,
       increaseDelta: config.increaseDelta ?? 1,
       decreaseMultiplier: config.decreaseMultiplier ?? 0.5,
       failureThreshold: config.failureThreshold ?? 0.2,
-      tokenTimeoutMs: config.tokenTimeoutMs ?? 30000,
+      tokenReturnTimeoutMs: config.tokenReturnTimeoutMs ?? 30000,
       windowMs: config.windowMs ?? 30000,
     };
 
@@ -163,7 +189,7 @@ export class AIMDBucket {
       // capacity is available now, immediately issue a token
       this.tokens--;
       this.tokensIssued++;
-      return new AIMDBucketToken(this, this.config.tokenTimeoutMs);
+      return new AIMDBucketToken(this, this.config.tokenReturnTimeoutMs);
     } else {
       // capacity is not available now, return a promise for a future token
       const span = tracer.startSpan("token-bucket.wait", {
@@ -286,7 +312,7 @@ export class AIMDBucket {
       const request = this.pending.shift()!;
       this.tokens--;
       this.tokensIssued++;
-      request.resolve(new AIMDBucketToken(this, this.config.tokenTimeoutMs));
+      request.resolve(new AIMDBucketToken(this, this.config.tokenReturnTimeoutMs));
     }
   }
 
