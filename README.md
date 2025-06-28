@@ -1,8 +1,13 @@
 # AIMD Bucket
 
-A TypeScript/JavaScript implementation of an **AIMD (Additive Increase Multiplicative Decrease)** rate limiting token bucket with adaptive rate adjustment. This library is ideal for clients in distributed systems that need to discover and adapt to unknown server-side rate limits dynamically.
+A TypeScript/JavaScript implementation of an **AIMD (Additive Increase Multiplicative Decrease)** rate limiting token bucket with adaptive rate adjustment. This library is ideal for clients in distributed systems that need to discover and adapt to unknown remote system limits dynamically.
 
 You can create a bucket with some configured defaults and boundaries, and then ask for tokens from it. You report if each token was successful in doing a unit of work, or if it encountered an error or a server side rate limit. The bucket will then start brokering tokens faster or slower depending on the outcomes you report. The bucket adjusts the rate limit using the smae simple adaptive limiting algorithm used in TCP: AIMD.
+
+## Example uses cases
+
+- throttle your outgoing requests to a system that starts breaking under load to not break it
+- throttle your outgoing requests to a rate limited API from 3 different processes all competing for that rate limit
 
 ## Installation
 
@@ -19,8 +24,11 @@ pnpm add aimd-bucket
 ```typescript
 import { AIMDBucket } from "aimd-bucket";
 
-// Create a bucket with default settings
+// Create a bucket with default settings (starts with unlimited rate)
 const bucket = new AIMDBucket();
+
+// Or create a bucket with a conservative initial rate
+const conservativeBucket = new AIMDBucket({ initialRate: 10 });
 
 // Acquire a token before making a request
 const token = await bucket.acquire();
@@ -47,13 +55,13 @@ The `AIMDBucket` constructor accepts a configuration object with the following o
 
 ```typescript
 interface AIMDBucketConfig {
-  initialRate?: number; // Initial rate limit (tokens per second), default: 10
-  maxRate?: number; // Maximum rate limit, default: 100
+  initialRate?: number; // Initial rate limit (tokens per second), default: maxRate
+  maxRate?: number; // Maximum rate limit, default: Infinity
   minRate?: number; // Minimum rate limit, default: 1
   increaseDelta?: number; // Amount to increase rate by on success, default: 1
   decreaseMultiplier?: number; // Multiplier to decrease rate by on failure, default: 0.5
   failureThreshold?: number; // Failure threshold (0-1) that triggers decrease, default: 0.2
-  tokenTimeoutMs?: number; // Token timeout in milliseconds, default: 30000
+  tokenReturnTimeoutMs?: number; // Token timeout in milliseconds, default: 30000
   windowMs?: number; // Sliding window duration for rate decisions, default: 30000
 }
 ```
@@ -68,126 +76,9 @@ const bucket = new AIMDBucket({
   increaseDelta: 2, // Increase by 2 on success
   decreaseMultiplier: 0.8, // Decrease to 80% on failure
   failureThreshold: 0.1, // Decrease rate if >10% failures
-  tokenTimeoutMs: 60000, // Tokens expire after 60 seconds
+  tokenReturnTimeoutMs: 60000, // Tokens expire after 60 seconds
   windowMs: 60000, // Use 60-second window for rate decisions
 });
-```
-
-## Usage Patterns
-
-### Basic API Rate Limiting
-
-```typescript
-import { AIMDBucket } from "aimd-bucket";
-
-const bucket = new AIMDBucket({ initialRate: 10 });
-
-async function makeApiCall() {
-  const token = await bucket.acquire();
-
-  try {
-    const response = await fetch("https://api.example.com/endpoint");
-
-    if (response.ok) {
-      token.success();
-      return await response.json();
-    } else if (response.status === 429) {
-      token.rateLimited();
-      throw new Error("Rate limited");
-    } else {
-      token.failure();
-      throw new Error(`API error: ${response.status}`);
-    }
-  } catch (error) {
-    token.failure();
-    throw error;
-  }
-}
-```
-
-### Concurrent Request Handling
-
-```typescript
-async function makeConcurrentRequests(count: number) {
-  const promises = Array.from({ length: count }, async () => {
-    const token = await bucket.acquire();
-
-    try {
-      const response = await fetch("https://api.example.com/endpoint");
-      token.success();
-      return response.json();
-    } catch (error) {
-      token.failure();
-      throw error;
-    }
-  });
-
-  return Promise.all(promises);
-}
-```
-
-### Monitoring and Statistics
-
-```typescript
-// Get current statistics
-const stats = bucket.getStatistics();
-console.log("Current rate:", stats.currentRate, "tokens/sec");
-console.log("Success rate:", (stats.successRate * 100).toFixed(1) + "%");
-console.log("Total tokens issued:", stats.tokensIssued);
-console.log("Recent failures:", stats.failureCount);
-
-// Monitor rate changes
-setInterval(() => {
-  const currentRate = bucket.getCurrentRate();
-  console.log(`Current rate: ${currentRate} tokens/sec`);
-}, 5000);
-```
-
-### OpenTelemetry Observability
-
-The AIMD Bucket automatically emits OpenTelemetry spans when tokens are not immediately available and require waiting. This provides valuable observability into rate limiting behavior without any additional configuration.
-
-#### Emitted Spans
-
-**Span Name**: `token-bucket.wait`
-
-**When Emitted**: Only when `acquire()` cannot immediately provide a token and the request must wait for capacity to become available.
-
-**Attributes**:
-
-- `token_bucket.current_rate` (number): Current rate limit in tokens per second
-- `token_bucket.available_tokens` (number): Number of tokens currently available
-- `token_bucket.pending_requests` (number): Number of requests currently waiting for tokens
-
-**Example Usage**:
-
-```typescript
-import { trace } from "@opentelemetry/api";
-
-// The span is automatically created when waiting is required
-const token = await bucket.acquire(); // May create a span if tokens aren't immediately available
-
-// You can access the current span context if needed
-const currentSpan = trace.getActiveSpan();
-if (currentSpan) {
-  console.log("Current span:", currentSpan.name);
-}
-```
-
-**Note**: No spans are emitted for immediate token acquisition when capacity is available. Spans are only created when there's an actual wait period, providing focused observability on rate limiting bottlenecks.
-
-### Graceful Shutdown
-
-```typescript
-// Shutdown the bucket gracefully
-await bucket.shutdown();
-
-// All pending acquire() calls will be rejected
-try {
-  await bucket.acquire(); // This will throw an error
-} catch (error) {
-  console.log("Bucket is shut down");
-}
 ```
 
 ## Token Lifecycle
@@ -199,16 +90,18 @@ Each token must be completed exactly once with one of these methods:
 - `token.rateLimited()` - Request was rate limited (429 status)
 - `token.timeout()` - Request timed out
 
+Successful responses will allow the rate limit to increase, and failed responses will force the rate limit to decrease.
+
 ### Token States
 
 ```typescript
 const token = await bucket.acquire();
 
-console.log(token.isCompleted()); // false
-console.log(token.isExpired()); // false
+console.log(token.isCompleted); // false
+console.log(token.isExpired); // false
 
 token.success();
-console.log(token.isCompleted()); // true
+console.log(token.isCompleted); // true
 
 // Cannot complete the same token twice
 token.success(); // Throws error: "Token has already been completed"
