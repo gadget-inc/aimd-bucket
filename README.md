@@ -55,15 +55,55 @@ The `AIMDBucket` constructor accepts a configuration object with the following o
 
 ```typescript
 interface AIMDBucketConfig {
-  initialRate?: number; // Initial rate limit (tokens per second), default: maxRate
-  maxRate?: number; // Maximum rate limit, default: Infinity
-  minRate?: number; // Minimum rate limit, default: 1
-  increaseDelta?: number; // Amount to increase rate by on success, default: 1
-  decreaseMultiplier?: number; // Multiplier to decrease rate by on failure, default: 0.5
-  failureThreshold?: number; // Failure threshold (0-1) that triggers decrease, default: 0.2
-  tokenReturnTimeoutMs?: number; // Token timeout in milliseconds, default: 30000
-  windowMs?: number; // Sliding window duration for rate decisions, default: 30000
-  name?: string; // Bucket name used for observability spans
+  /**
+   * Initial rate to start the bucket at (tokens per second)
+   * @default maxRate
+   */
+  initialRate?: number;
+  /**
+   * Maximum rate limit (tokens per second)
+   * @default Infinity
+   */
+  maxRate?: number;
+  /**
+   * Minimum rate limit (tokens per second)
+   * @default 1
+   */
+  minRate?: number;
+  /**
+   * Amount to increase rate by on success (additive increase)
+   * @default 1
+   */
+  increaseDelta?: number;
+  /**
+   * Multiplier to decrease rate by on failure (multiplicative decrease)
+   * @default 0.5
+   */
+  decreaseMultiplier?: number;
+  /**
+   * Failure threshold (0-1) that triggers decrease
+   * @default 0.2
+   */
+  failureThreshold?: number;
+  /**
+   * Token timeout in milliseconds (if not completed in this time, marked as timed out)
+   * @default 30000
+   */
+  tokenReturnTimeoutMs?: number;
+  /**
+   * Sliding window duration for rate decisions (ms)
+   * @default 30000
+   */
+  windowMs?: number;
+  /**
+   * Optional cooldown period (ms) between rate adjustments. If set, rate will only adjust at most once per this interval.
+   * @default 0 (no cooldown)
+   */
+  rateAdjustmentCooldownMs?: number;
+  /**
+   * Bucket name used for observability spans
+   */
+  name?: string;
 }
 ```
 
@@ -79,6 +119,7 @@ const bucket = new AIMDBucket({
   failureThreshold: 0.1, // Decrease rate if >10% failures
   tokenReturnTimeoutMs: 60000, // Tokens expire after 60 seconds
   windowMs: 60000, // Use 60-second window for rate decisions
+  rateAdjustmentCooldownMs: 2000, // Only allow one rate adjustment every 2 seconds
 });
 ```
 

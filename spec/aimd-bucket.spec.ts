@@ -1196,6 +1196,69 @@ describe("AIMDBucket", () => {
       expect(stats.pendingCount).toBe(0);
     });
   });
+
+  describe("rateAdjustmentCooldownMs option", () => {
+    it("should only allow one rate adjustment per cooldown window", async () => {
+      bucket = new AIMDBucket({
+        initialRate: 100,
+        decreaseMultiplier: 0.5,
+        failureThreshold: 0.1,
+        rateAdjustmentCooldownMs: 2000,
+      });
+
+      // 5 failures to trigger adjustment
+      for (let i = 0; i < 5; i++) {
+        const token = await bucket.acquire();
+        token.failure();
+        vi.setSystemTime(Date.now() + 10);
+        await Promise.resolve();
+      }
+      const rateAfterFirst = bucket.getCurrentRate();
+
+      // Another 5 failures immediately (should not decrease again)
+      for (let i = 0; i < 5; i++) {
+        const token = await bucket.acquire();
+        token.failure();
+        vi.setSystemTime(Date.now() + 10);
+        await Promise.resolve();
+      }
+      expect(bucket.getCurrentRate()).toBe(rateAfterFirst);
+
+      // Advance system time by 2s (cooldown period)
+      vi.setSystemTime(Date.now() + 2000);
+      await Promise.resolve();
+      // Another 5 failures to trigger another adjustment
+      for (let i = 0; i < 5; i++) {
+        const token = await bucket.acquire();
+        token.failure();
+        vi.setSystemTime(Date.now() + 10);
+        await Promise.resolve();
+      }
+
+      expect(bucket.getCurrentRate()).toBeLessThan(rateAfterFirst);
+    });
+
+    it("should allow rate adjustment on every event if cooldown is 0 (default)", async () => {
+      bucket = new AIMDBucket({
+        initialRate: 100,
+        decreaseMultiplier: 0.5,
+        failureThreshold: 0.1,
+        rateAdjustmentCooldownMs: 0,
+      });
+      const rates: number[] = [];
+      for (let i = 0; i < 15; i++) {
+        const token = await bucket.acquire();
+        token.failure();
+        rates.push(bucket.getCurrentRate());
+        vi.setSystemTime(Date.now() + 1000); // advance enough to refill bucket
+        await Promise.resolve();
+      }
+
+      // Should see multiple decreases, not flat
+      const uniqueRates = Array.from(new Set(rates));
+      expect(uniqueRates.length).toBeGreaterThan(2);
+    });
+  });
 });
 
 describe("Token", () => {
@@ -1203,13 +1266,8 @@ describe("Token", () => {
   let token: AIMDBucketToken;
 
   beforeEach(async () => {
-    vi.useFakeTimers();
     bucket = new AIMDBucket();
     token = await bucket.acquire();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
   });
 
   it("should have proper initial state", () => {

@@ -48,6 +48,11 @@ export interface AIMDBucketConfig {
    * Bucket name for tracing spans
    */
   name?: string;
+  /**
+   * Optional cooldown period (ms) between rate adjustments. If set, rate will only adjust at most once per this interval.
+   * @default 0 (no cooldown)
+   */
+  rateAdjustmentCooldownMs?: number;
 }
 
 /**
@@ -160,6 +165,7 @@ export class AIMDBucket {
   private pending: { resolve: (token: AIMDBucketToken) => void; reject: (error: Error) => void; timestamp: number }[] = [];
   private isShutdown = false;
   private pendingTimer?: NodeJS.Timeout;
+  private lastRateAdjustmentTime = 0;
 
   private config: Required<Omit<AIMDBucketConfig, "name">> & { name?: string };
 
@@ -175,6 +181,7 @@ export class AIMDBucket {
       failureThreshold: config.failureThreshold ?? 0.2,
       tokenReturnTimeoutMs: config.tokenReturnTimeoutMs ?? 30000,
       windowMs: config.windowMs ?? 30000,
+      rateAdjustmentCooldownMs: config.rateAdjustmentCooldownMs ?? 0,
     };
 
     this._validate();
@@ -381,6 +388,12 @@ export class AIMDBucket {
     // Need minimum samples to make rate decisions
     if (this.recentOutcomes.length < 5) return;
 
+    // Don't adjust the rate if we've adjusted it recently
+    const cooldown = this.config.rateAdjustmentCooldownMs;
+    if (cooldown > 0 && now - this.lastRateAdjustmentTime < cooldown) {
+      return;
+    }
+
     const failures = this.recentOutcomes.filter((o) => o.outcome !== "success").length;
     const failureRate = failures / this.recentOutcomes.length;
 
@@ -394,5 +407,6 @@ export class AIMDBucket {
 
     // Update capacity when rate changes, ensuring it's at least 1
     this.capacity = Math.max(1, this.rate);
+    this.lastRateAdjustmentTime = now;
   }
 }
