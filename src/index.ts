@@ -44,6 +44,10 @@ export interface AIMDBucketConfig {
    * @default 30000
    */
   windowMs?: number;
+  /**
+   * Bucket name for tracing spans
+   */
+  name?: string;
 }
 
 /**
@@ -157,7 +161,7 @@ export class AIMDBucket {
   private isShutdown = false;
   private pendingTimer?: NodeJS.Timeout;
 
-  private config: Required<AIMDBucketConfig>;
+  private config: Required<Omit<AIMDBucketConfig, "name">> & { name?: string };
 
   constructor(config: AIMDBucketConfig = {}) {
     const maxRate = config.maxRate ?? Number.MAX_SAFE_INTEGER / 2; // effectively infinity, but we can still do math on it
@@ -204,6 +208,7 @@ export class AIMDBucket {
           "token_bucket.current_rate": this.rate,
           "token_bucket.available_tokens": this.tokens,
           "token_bucket.pending_requests": this.pending.length,
+          "token_bucket.name": this.config.name,
         },
       });
 

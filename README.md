@@ -63,6 +63,7 @@ interface AIMDBucketConfig {
   failureThreshold?: number; // Failure threshold (0-1) that triggers decrease, default: 0.2
   tokenReturnTimeoutMs?: number; // Token timeout in milliseconds, default: 30000
   windowMs?: number; // Sliding window duration for rate decisions, default: 30000
+  name?: string; // Bucket name used for observability spans
 }
 ```
 
@@ -223,6 +224,15 @@ const conservativeBucket = new AIMDBucket({
   failureThreshold: 0.3,
 });
 ```
+
+## Observability
+
+The library includes built-in OpenTelemetry support for monitoring token bucket behavior. When a token is not immediately available and the request needs to wait, a span named `"token-bucket.wait"` is automatically created with the following attributes:
+
+- `token_bucket.current_rate` - Current rate limit (tokens per second)
+- `token_bucket.available_tokens` - Number of tokens currently available
+- `token_bucket.pending_requests` - Number of requests waiting for tokens
+- `token_bucket.name` - Bucket name (if configured)
 
 ## API Reference
 

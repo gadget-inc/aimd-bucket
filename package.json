@@ -1,6 +1,6 @@
 {
   "name": "aimd-bucket",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "An adaptive rate limiting leaky bucket",
   "main": "dist/src/index.js",
   "repository": "gadget-inc/aimd-bucket",
