@@ -38,7 +38,7 @@ importers:
         version: 11.3.0
       lodash:
         specifier: ^4.17.21
-        version: 4.17.21
+        version: 4.18.1
       prettier:
         specifier: ^2.8.1
         version: 2.8.8
@@ -719,8 +719,8 @@ packages:
   jsonfile@6.1.0:
     resolution: {integrity: sha512-5dgndWOriYSm5cnYaJNhalLNDKOqFwyDB/rr1E9ZsGciGvKPs8R2xYGCacuf3z6K1YKDz182fd+fY3cn3pMqXQ==}
 
-  lodash@4.17.21:
-    resolution: {integrity: sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg==}
+  lodash@4.18.1:
+    resolution: {integrity: sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q==}
 
   loupe@3.1.4:
     resolution: {integrity: sha512-wJzkKwJrheKtknCOKNEtDK4iqg/MxmZheEMtSTYvnzRdEYaZzmgH976nenp8WdJRdx5Vc1X/9MO0Oszl6ezeXg==}
@@ -1560,7 +1560,7 @@ snapshots:
     optionalDependencies:
       graceful-fs: 4.2.11
 
-  lodash@4.17.21: {}
+  lodash@4.18.1: {}
 
   loupe@3.1.4: {}
 
